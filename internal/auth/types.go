@@ -63,3 +63,47 @@ type Identity struct {
 	UserID string
 	Role   user.Role
 }
+
+type registerRequest struct {
+	FullName             string  `json:"full_name"`
+	Email                string  `json:"email"`
+	Password             string  `json:"password"`
+	PasswordConfirmation string  `json:"password_confirmation"`
+	DeviceName           *string `json:"device_name,omitempty"`
+}
+
+type loginRequest struct {
+	Email      string  `json:"email"`
+	Password   string  `json:"password"`
+	DeviceName *string `json:"device_name,omitempty"`
+}
+
+type refreshRequest struct {
+	RefreshToken string `json:"refresh_token"`
+}
+
+type logoutRequest struct {
+	RefreshToken string `json:"refresh_token"`
+}
+
+type authUserResponse struct {
+	ID        string    `json:"id"`
+	FullName  string    `json:"full_name"`
+	Email     string    `json:"email"`
+	Role      user.Role `json:"role"`
+	AvatarKey *string   `json:"avatar_key"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type tokenPairResponse struct {
+	AccessToken           string    `json:"access_token"`
+	RefreshToken          string    `json:"refresh_token"`
+	AccessTokenExpiresAt  time.Time `json:"access_token_expires_at"`
+	RefreshTokenExpiresAt time.Time `json:"refresh_token_expires_at"`
+}
+
+type authResponse struct {
+	User   authUserResponse  `json:"user"`
+	Tokens tokenPairResponse `json:"tokens"`
+}

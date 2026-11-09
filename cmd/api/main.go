@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/Dimes2212/5th_semester_course_work_backend/internal/auth"
+	"github.com/Dimes2212/5th_semester_course_work_backend/internal/lookup"
+	"github.com/Dimes2212/5th_semester_course_work_backend/internal/user"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -69,6 +71,16 @@ func main() {
 	authHandler := auth.NewHandler(authService)
 	authMiddleware := auth.NewMiddleware(authService)
 
+	// профиль пользователя
+	userRepository := user.NewRepository(db)
+	userService := user.NewService(userRepository)
+	userHandler := user.NewHandler(userService)
+
+	//лукапы для категорий
+	lookupRepository := lookup.NewRepository(db)
+	lookupService := lookup.NewService(lookupRepository)
+	lookupHandler := lookup.NewHandler(lookupService)
+
 	//роутер
 	router := chi.NewRouter()
 	// встроенные миддлвары
@@ -85,6 +97,17 @@ func main() {
 
 		router.With(authMiddleware.Authenticate).
 			Post("/logout", authHandler.Logout)
+	})
+
+	router.Get("/api/v1/categories", lookupHandler.GetCategories)
+	router.Get("/api/v1/locations", lookupHandler.GetLocations)
+
+	router.Group(func(router chi.Router) {
+		router.Use(authMiddleware.Authenticate)
+
+		router.Get("/api/v1/me", userHandler.GetMe)
+		router.Patch("/api/v1/me", userHandler.UpdateName)
+		router.Delete("/api/v1/me", userHandler.DeleteMe)
 	})
 
 	// запуск сервера

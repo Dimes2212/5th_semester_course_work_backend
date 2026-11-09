@@ -1,19 +1,17 @@
 package auth
 
 import (
-	"context"
 	"net/http"
 	"strings"
 
+	"github.com/Dimes2212/5th_semester_course_work_backend/internal/apihelper"
+	"github.com/Dimes2212/5th_semester_course_work_backend/internal/requestctx"
 	"github.com/Dimes2212/5th_semester_course_work_backend/internal/user"
 )
 
 type Middleware struct {
 	service *Service
 }
-type contextKey uint8
-
-const identityContextKey contextKey = iota
 
 func NewMiddleware(service *Service) *Middleware {
 	return &Middleware{
@@ -25,23 +23,29 @@ func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authorization := r.Header.Get("Authorization")
 		if authorization == "" {
-			writeError(w, http.StatusUnauthorized, "access_token_required")
+			apihelper.WriteError(w, http.StatusUnauthorized, "access_token_required")
 			return
 		}
 
 		parts := strings.Fields(authorization)
 		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-			writeError(w, http.StatusUnauthorized, "invalid_access_token")
+			apihelper.WriteError(w, http.StatusUnauthorized, "invalid_access_token")
 			return
 		}
 
 		identity, err := m.service.ParseAccessToken(parts[1])
 		if err != nil {
-			writeError(w, http.StatusUnauthorized, "invalid_access_token")
+			apihelper.WriteError(w, http.StatusUnauthorized, "invalid_access_token")
 			return
 		}
 
-		ctx := context.WithValue(r.Context(), identityContextKey, identity)
+		ctx := requestctx.WithCurrentUser(
+			r.Context(),
+			requestctx.CurrentUser{
+				UserID: identity.UserID,
+				Role:   string(identity.Role),
+			},
+		)
 
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
@@ -49,21 +53,16 @@ func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 
 func (m *Middleware) RequireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		identity, ok := IdentityFromContext(r.Context())
+		currentUser, ok := requestctx.CurrentUserFromContext(r.Context())
 		if !ok {
-			writeError(w, http.StatusUnauthorized, "unauthorized")
+			apihelper.WriteError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		if identity.Role != user.RoleAdmin {
-			writeError(w, http.StatusForbidden, "forbidden")
+		if currentUser.Role != string(user.RoleAdmin) {
+			apihelper.WriteError(w, http.StatusForbidden, "forbidden")
 			return
 		}
 
 		next.ServeHTTP(w, r)
 	})
-}
-
-func IdentityFromContext(ctx context.Context) (Identity, bool) {
-	identity, ok := ctx.Value(identityContextKey).(Identity)
-	return identity, ok
 }
