@@ -7,11 +7,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/Dimes2212/5th_semester_course_work_backend/internal/auth"
+	"github.com/Dimes2212/5th_semester_course_work_backend/internal/listing"
 	"github.com/Dimes2212/5th_semester_course_work_backend/internal/lookup"
+	"github.com/Dimes2212/5th_semester_course_work_backend/internal/s3"
 	"github.com/Dimes2212/5th_semester_course_work_backend/internal/user"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -44,6 +47,36 @@ func main() {
 
 	log.Println("connected to PostgreSQL")
 
+	// настройка s3
+	s3UseSSL, err := strconv.ParseBool(
+		os.Getenv("S3_USE_SSL"),
+	)
+	if err != nil {
+		log.Fatalf("parse S3_USE_SSL: %v", err)
+	}
+
+	objectStorage, err := s3.NewClient(s3.Config{
+		Endpoint:        os.Getenv("S3_ENDPOINT"),
+		Region:          os.Getenv("S3_REGION"),
+		Bucket:          os.Getenv("S3_BUCKET"),
+		AccessKeyID:     os.Getenv("S3_ACCESS_KEY_ID"),
+		SecretAccessKey: os.Getenv("S3_SECRET_ACCESS_KEY"),
+		UseSSL:          s3UseSSL,
+	})
+	if err != nil {
+		log.Fatalf("create S3 client: %v", err)
+	}
+
+	storageCheckCtx, cancelStorageCheck := context.WithTimeout(ctx, 10*time.Second)
+
+	err = objectStorage.CheckBucket(storageCheckCtx)
+	cancelStorageCheck()
+
+	if err != nil {
+		log.Fatalf("connect to S3 bucket: %v", err)
+	}
+
+	log.Println("connected to S3 bucket")
 	// настройка секреток
 	jwtSecret := os.Getenv("JWT_SECRET")
 	if jwtSecret == "" {
@@ -81,8 +114,14 @@ func main() {
 	lookupService := lookup.NewService(lookupRepository)
 	lookupHandler := lookup.NewHandler(lookupService)
 
+	//листинги
+	listingRepository := listing.NewRepository(db)
+	listingService := listing.NewService(listingRepository, objectStorage)
+	listingHandler := listing.NewHandler(listingService)
+
 	//роутер
 	router := chi.NewRouter()
+
 	// встроенные миддлвары
 	router.Use(middleware.RequestID)
 	router.Use(middleware.RealIP)
@@ -102,12 +141,23 @@ func main() {
 	router.Get("/api/v1/categories", lookupHandler.GetCategories)
 	router.Get("/api/v1/locations", lookupHandler.GetLocations)
 
+	router.Get("/api/v1/listings", listingHandler.GetListingsFeed)
+
+	router.Get("/api/v1/listings/{listingID}", listingHandler.GetListingByID)
+
 	router.Group(func(router chi.Router) {
 		router.Use(authMiddleware.Authenticate)
 
 		router.Get("/api/v1/me", userHandler.GetMe)
 		router.Patch("/api/v1/me", userHandler.UpdateName)
 		router.Delete("/api/v1/me", userHandler.DeleteMe)
+		router.Post("/api/v1/listings", listingHandler.CreateListing)
+		router.Put("/api/v1/listings/{listingID}", listingHandler.UpdateListing)
+		router.Post("/api/v1/listings/{listingID}/resolve", listingHandler.ResolveListing)
+		router.Delete("/api/v1/listings/{listingID}", listingHandler.DeleteListing)
+		router.Get("/api/v1/me/listings", listingHandler.GetMyListings)
+		router.Post("/api/v1/listings/{listingID}/photos", listingHandler.AddListingPhoto)
+		router.Delete("/api/v1/listings/{listingID}/photos/{photoID}", listingHandler.DeleteListingPhoto)
 	})
 
 	// запуск сервера
