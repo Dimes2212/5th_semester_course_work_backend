@@ -35,7 +35,7 @@ HTTP API и Go-модуль ещё не реализованы. Структур
 13. Подтвердить возврат вещи владельцу.
 14. Создать диалог по объявлению.
 15. Просматривать список своих диалогов и историю сообщений.
-16. Отправлять сообщения и отмечать их прочитанными.
+16. Отправлять сообщения.
 
 ### Пока не входят в MVP
 
@@ -240,7 +240,6 @@ erDiagram
         uuid sender_id FK
         text text
         timestamptz created_at
-        timestamptz read_at
     }
 ```
 
@@ -620,7 +619,7 @@ POST /api/v1/listings/{listingID}/resolve
 #### Создать или получить диалог
 
 ```http
-POST /api/v1/listings/{listingID}/conversation
+POST /api/v1/listings/{listingID}/conversations
 ```
 
 Если диалог уже существует, возвращается существующий объект. Автор объявления не может создать диалог с самим собой.
@@ -628,7 +627,7 @@ POST /api/v1/listings/{listingID}/conversation
 #### Список диалогов
 
 ```http
-GET /api/v1/conversations?page=1&per_page=20
+GET /api/v1/me/conversations
 ```
 
 Элемент списка содержит:
@@ -636,19 +635,12 @@ GET /api/v1/conversations?page=1&per_page=20
 - собеседника;
 - краткую информацию об объявлении;
 - последнее сообщение;
-- время последней активности;
-- количество непрочитанных сообщений.
-
-#### Получить диалог
-
-```http
-GET /api/v1/conversations/{conversationID}
-```
+- время последней активности.
 
 #### История сообщений
 
 ```http
-GET /api/v1/conversations/{conversationID}/messages?page=1&per_page=50
+GET /api/v1/conversations/{conversationID}/messages
 ```
 
 #### Отправить сообщение
@@ -664,14 +656,6 @@ POST /api/v1/conversations/{conversationID}/messages
 ```
 
 Ответ: `201 Created` с сохранённым сообщением.
-
-#### Отметить сообщения прочитанными
-
-```http
-POST /api/v1/conversations/{conversationID}/read
-```
-
-Устанавливает `read_at` для непрочитанных сообщений собеседника в этом диалоге.
 
 ### 7.8 Системный endpoint
 
@@ -890,9 +874,7 @@ make migrate-down
 
 11. `feat: implement chat messages`
     - история;
-    - отправка;
-    - прочтение;
-    - непрочитанные сообщения.
+    - отправка.
 
 12. `docs: add OpenAPI specification`
     - полный контракт для Android-клиента.

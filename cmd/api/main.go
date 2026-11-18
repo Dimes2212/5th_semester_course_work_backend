@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Dimes2212/5th_semester_course_work_backend/internal/auth"
+	"github.com/Dimes2212/5th_semester_course_work_backend/internal/chat"
 	"github.com/Dimes2212/5th_semester_course_work_backend/internal/listing"
 	"github.com/Dimes2212/5th_semester_course_work_backend/internal/lookup"
 	"github.com/Dimes2212/5th_semester_course_work_backend/internal/s3"
@@ -119,6 +120,11 @@ func main() {
 	listingService := listing.NewService(listingRepository, objectStorage)
 	listingHandler := listing.NewHandler(listingService)
 
+	//чаты
+	chatRepository := chat.NewRepository(db)
+	chatService := chat.NewService(chatRepository)
+	chatHandler := chat.NewHandler(chatService)
+
 	//роутер
 	router := chi.NewRouter()
 
@@ -158,6 +164,10 @@ func main() {
 		router.Get("/api/v1/me/listings", listingHandler.GetMyListings)
 		router.Post("/api/v1/listings/{listingID}/photos", listingHandler.AddListingPhoto)
 		router.Delete("/api/v1/listings/{listingID}/photos/{photoID}", listingHandler.DeleteListingPhoto)
+		router.Post("/api/v1/listings/{listingID}/conversations", chatHandler.CreateOrGetConversation)
+		router.Get("/api/v1/me/conversations", chatHandler.GetMyConversations)
+		router.Get("/api/v1/conversations/{conversationID}/messages", chatHandler.GetConversationMessages)
+		router.Post("/api/v1/conversations/{conversationID}/messages", chatHandler.CreateMessage)
 	})
 
 	// запуск сервера
