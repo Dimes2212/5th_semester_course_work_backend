@@ -1,0 +1,781 @@
+openapi: 3.0.3
+info:
+  title: CampusLost API
+  version: 1.0.0
+  description: REST API приложения поиска потерянных вещей. WebSocket используется только для доставки событий в реальном времени.
+servers:
+  - url: http://localhost:8080
+    description: Локальная среда
+
+tags:
+  - name: System
+  - name: Auth
+  - name: Profile
+  - name: Lookups
+  - name: Listings
+  - name: Chats
+  - name: Realtime
+  - name: Admin
+
+paths:
+  /health:
+    get:
+      tags: [System]
+      summary: Проверить доступность API и PostgreSQL
+      responses:
+        "200":
+          description: API готово принимать запросы
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        "503":
+          description: PostgreSQL недоступен
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+
+  /api/v1/auth/register:
+    post:
+      tags: [Auth]
+      summary: Зарегистрировать пользователя
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: Пользователь создан
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409":
+          description: Email уже зарегистрирован
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: Войти по email и паролю
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Успешный вход
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/v1/auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Ротировать refresh-токен и получить новую пару токенов
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          description: Новая пара токенов
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Отозвать refresh-сессию
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "204": { description: Сессия отозвана }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/categories:
+    get:
+      tags: [Lookups]
+      summary: Получить категории
+      responses:
+        "200":
+          description: Активные категории
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Category" }
+
+  /api/v1/locations:
+    get:
+      tags: [Lookups]
+      summary: Получить места
+      responses:
+        "200":
+          description: Активные места
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Location" }
+
+  /api/v1/me:
+    get:
+      tags: [Profile]
+      summary: Получить свой профиль
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Профиль
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    patch:
+      tags: [Profile]
+      summary: Изменить имя
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [full_name]
+              properties:
+                full_name: { type: string, maxLength: 100 }
+      responses:
+        "200":
+          description: Обновлённый профиль
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    delete:
+      tags: [Profile]
+      summary: Удалить свой аккаунт
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Аккаунт удалён, refresh-сессии отозваны }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/me/listings:
+    get:
+      tags: [Listings]
+      summary: Получить свои объявления
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Объявления пользователя
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Listing" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/listings:
+    get:
+      tags: [Listings]
+      summary: Получить ленту активных объявлений
+      parameters:
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: q, in: query, schema: { type: string, maxLength: 100 } }
+        - { name: kind, in: query, schema: { $ref: "#/components/schemas/ListingKind" } }
+        - { name: category_id, in: query, schema: { type: integer, format: int32, minimum: 1 } }
+        - { name: location_id, in: query, schema: { type: integer, format: int32, minimum: 1 } }
+      responses:
+        "200":
+          description: Страница из четырёх объявлений
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListingFeed" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+    post:
+      tags: [Listings]
+      summary: Создать объявление
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ListingWriteRequest" }
+      responses:
+        "201":
+          description: Объявление создано
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Listing" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/listings/{listingID}:
+    parameters:
+      - $ref: "#/components/parameters/ListingID"
+    get:
+      tags: [Listings]
+      summary: Получить объявление
+      responses:
+        "200":
+          description: Объявление
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Listing" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [Listings]
+      summary: Изменить своё активное объявление
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ListingWriteRequest" }
+      responses:
+        "200":
+          description: Обновлённое объявление
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Listing" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Listings]
+      summary: Удалить своё объявление из публичной выдачи
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Результат soft delete
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeleteListingResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/listings/{listingID}/resolve:
+    post:
+      tags: [Listings]
+      summary: Пометить своё объявление завершённым
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ListingID"
+      responses:
+        "200":
+          description: Завершённое объявление
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Listing" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/listings/{listingID}/photos:
+    post:
+      tags: [Listings]
+      summary: Добавить фотографию к своему объявлению
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ListingID"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [photo]
+              properties:
+                photo:
+                  type: string
+                  format: binary
+      responses:
+        "201":
+          description: Фотография добавлена
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListingPhoto" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Уже загружены три фотографии
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "413":
+          description: Файл больше 5 MiB
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "415":
+          description: Поддерживаются JPEG, PNG и WebP
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v1/listings/{listingID}/photos/{photoID}:
+    delete:
+      tags: [Listings]
+      summary: Удалить фотографию своего объявления
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ListingID"
+        - name: photoID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Фотография удалена из S3 и PostgreSQL }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/listings/{listingID}/conversations:
+    post:
+      tags: [Chats]
+      summary: Создать или получить диалог по объявлению
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ListingID"
+      responses:
+        "200":
+          description: Новый или существующий диалог
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Conversation" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Автор объявления не может начать диалог с собой
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v1/me/conversations:
+    get:
+      tags: [Chats]
+      summary: Получить свои диалоги
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Диалоги пользователя
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Conversation" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/conversations/{conversationID}/messages:
+    parameters:
+      - $ref: "#/components/parameters/ConversationID"
+    get:
+      tags: [Chats]
+      summary: Получить всю историю сообщений диалога
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Сообщения по возрастанию времени
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Message" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [Chats]
+      summary: Отправить сообщение
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string, minLength: 1, maxLength: 2000 }
+      responses:
+        "201":
+          description: Сообщение сохранено; онлайн-получатель получает message_created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/v1/ws:
+    get:
+      tags: [Realtime]
+      summary: Открыть WebSocket для серверных событий
+      description: >-
+        Требует Authorization Bearer во время handshake. Клиент только читает события;
+        отправка data-сообщения клиентом закрывает соединение. Формат события описан
+        схемой MessageCreatedEnvelope.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "101": { description: WebSocket соединение установлено }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /api/v1/admin/users:
+    get:
+      tags: [Admin]
+      summary: Получить всех пользователей, включая удалённых и заблокированных
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Пользователи
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AdminUser" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/admin/users/{userID}/status:
+    patch:
+      tags: [Admin]
+      summary: Заблокировать или разблокировать обычного пользователя
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: userID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: blocked
+          in: query
+          required: true
+          schema: { type: boolean }
+      responses:
+        "200":
+          description: Обновлённый пользователь
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminUser" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/admin/listings:
+    get:
+      tags: [Admin]
+      summary: Получить все объявления, включая удалённые
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Объявления с подписанными URL фотографий
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AdminListing" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/admin/listings/{listingID}:
+    delete:
+      tags: [Admin]
+      summary: Скрыть объявление через soft delete
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ListingID"
+      responses:
+        "200":
+          description: Удалённое объявление
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminListing" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/admin/listings/{listingID}/restore:
+    patch:
+      tags: [Admin]
+      summary: Восстановить soft-deleted объявление
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/ListingID"
+      responses:
+        "200":
+          description: Восстановленное объявление
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminListing" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    ListingID:
+      name: listingID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ConversationID:
+      name: conversationID
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    BadRequest:
+      description: Невалидный запрос
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Access-токен отсутствует, невалиден или пользователь заблокирован
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Недостаточно прав
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Ресурс не найден или недоступен пользователю
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    RateLimited:
+      description: Превышен лимит запросов
+      headers:
+        Retry-After:
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string, example: invalid_request }
+
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, unavailable]
+
+    Role:
+      type: string
+      enum: [user, admin]
+    ListingKind:
+      type: string
+      enum: [lost, found]
+    ListingStatus:
+      type: string
+      enum: [active, resolved, archived]
+
+    RegisterRequest:
+      type: object
+      required: [full_name, email, password, password_confirmation]
+      properties:
+        full_name: { type: string, maxLength: 100 }
+        email: { type: string, format: email, maxLength: 255 }
+        password: { type: string, format: password, minLength: 8, maxLength: 72 }
+        password_confirmation: { type: string, format: password }
+        device_name: { type: string, nullable: true, maxLength: 100 }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, format: password }
+        device_name: { type: string, nullable: true, maxLength: 100 }
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token: { type: string }
+
+    User:
+      type: object
+      required: [id, full_name, email, role, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        full_name: { type: string }
+        email: { type: string, format: email }
+        role: { $ref: "#/components/schemas/Role" }
+        avatar_key: { type: string, nullable: true, deprecated: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    Tokens:
+      type: object
+      required: [access_token, refresh_token, access_token_expires_at, refresh_token_expires_at]
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        access_token_expires_at: { type: string, format: date-time }
+        refresh_token_expires_at: { type: string, format: date-time }
+    AuthResponse:
+      type: object
+      required: [user, tokens]
+      properties:
+        user: { $ref: "#/components/schemas/User" }
+        tokens: { $ref: "#/components/schemas/Tokens" }
+
+    Category:
+      type: object
+      required: [id, slug, name]
+      properties:
+        id: { type: integer, format: int32 }
+        slug: { type: string }
+        name: { type: string }
+    Location:
+      type: object
+      required: [id, name]
+      properties:
+        id: { type: integer, format: int32 }
+        name: { type: string }
+        address: { type: string, nullable: true }
+
+    ListingWriteRequest:
+      type: object
+      required: [category_id, location_id, kind, title, description, event_at]
+      properties:
+        category_id: { type: integer, format: int32, minimum: 1 }
+        location_id: { type: integer, format: int32, minimum: 1 }
+        location_details: { type: string, nullable: true, maxLength: 150 }
+        kind: { $ref: "#/components/schemas/ListingKind" }
+        title: { type: string, maxLength: 120 }
+        description: { type: string, maxLength: 2000 }
+        event_at: { type: string, format: date-time }
+    ListingPhoto:
+      type: object
+      required: [id, url, position]
+      properties:
+        id: { type: string, format: uuid }
+        url: { type: string, format: uri, description: Временный подписанный URL }
+        position: { type: integer, format: int32, minimum: 1, maximum: 3 }
+    Listing:
+      type: object
+      required: [id, author_id, category_id, location_id, kind, title, description, event_at, status, created_at, updated_at, photos]
+      properties:
+        id: { type: string, format: uuid }
+        author_id: { type: string, format: uuid }
+        category_id: { type: integer, format: int32 }
+        location_id: { type: integer, format: int32 }
+        location_details: { type: string, nullable: true }
+        kind: { $ref: "#/components/schemas/ListingKind" }
+        title: { type: string }
+        description: { type: string }
+        event_at: { type: string, format: date-time }
+        status: { $ref: "#/components/schemas/ListingStatus" }
+        resolved_with_user_id: { type: string, format: uuid, nullable: true }
+        resolved_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        photos:
+          type: array
+          items: { $ref: "#/components/schemas/ListingPhoto" }
+    AdminListing:
+      allOf:
+        - $ref: "#/components/schemas/Listing"
+        - type: object
+          properties:
+            deleted_at: { type: string, format: date-time, nullable: true }
+    ListingFeed:
+      type: object
+      required: [items, has_more]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Listing" }
+        next_cursor: { type: string, nullable: true }
+        has_more: { type: boolean }
+    DeleteListingResponse:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string, format: uuid }
+        deleted_at: { type: string, format: date-time, nullable: true }
+
+    Conversation:
+      type: object
+      required: [id, listing_id, listing_title, initiator_id, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        listing_id: { type: string, format: uuid }
+        listing_title: { type: string }
+        initiator_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        last_message_text: { type: string, nullable: true }
+    Message:
+      type: object
+      required: [id, conversation_id, sender_id, text, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        conversation_id: { type: string, format: uuid }
+        sender_id: { type: string, format: uuid }
+        text: { type: string }
+        created_at: { type: string, format: date-time }
+    MessageCreatedEnvelope:
+      type: object
+      required: [type, data]
+      properties:
+        type: { type: string, enum: [message_created] }
+        data: { $ref: "#/components/schemas/Message" }
+
+    AdminUser:
+      type: object
+      required: [id, full_name, email, role, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        full_name: { type: string }
+        email: { type: string, format: email }
+        role: { $ref: "#/components/schemas/Role" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        deleted_at: { type: string, format: date-time, nullable: true }
+        blocked_at: { type: string, format: date-time, nullable: true }

@@ -38,6 +38,10 @@ func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 			apihelper.WriteError(w, http.StatusUnauthorized, "invalid_access_token")
 			return
 		}
+		if err := m.service.ValidateAccessUser(r.Context(), identity.UserID); err != nil {
+			apihelper.WriteError(w, http.StatusUnauthorized, "invalid_access_token")
+			return
+		}
 
 		ctx := requestctx.WithCurrentUser(
 			r.Context(),

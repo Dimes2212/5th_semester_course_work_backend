@@ -312,35 +312,37 @@ func (r *Repository) FindMessagesByConversationID(ctx context.Context, conversat
 
 }
 
-func (r *Repository) CreateMessage(ctx context.Context, conversationID string, senderID string, text string) (Message, error) {
+func (r *Repository) CreateMessage(ctx context.Context, conversationID string, senderID string, text string) (Message, string, error) {
 	tx, err := r.db.Begin(ctx)
 	if err != nil {
-		return Message{}, err
+		return Message{}, "", err
 	}
 	defer tx.Rollback(ctx)
 
-	var hasAccess bool
+	var initiatorID string
+	var listingAuthorID string
 
 	err = tx.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			FROM conversations AS conversation
-			JOIN listings AS listing
-			ON listing.id = conversation.listing_id
-			WHERE conversation.id = $1
-			AND (
-				conversation.initiator_id = $2
-				OR listing.author_id = $2
-			)
-		);
-	`, conversationID, senderID).Scan(&hasAccess)
+		SELECT
+			conversation.initiator_id,
+			listing.author_id
+		FROM conversations AS conversation
+		JOIN listings AS listing
+		  ON listing.id = conversation.listing_id
+		WHERE conversation.id = $1
+		  AND (
+			  conversation.initiator_id = $2
+			  OR listing.author_id = $2
+		  )
+	`, conversationID, senderID).Scan(&initiatorID, &listingAuthorID)
 
 	if err != nil {
-		return Message{}, err
+		return Message{}, "", err
 	}
 
-	if !hasAccess {
-		return Message{}, pgx.ErrNoRows
+	recipientID := listingAuthorID
+	if senderID == listingAuthorID {
+		recipientID = initiatorID
 	}
 
 	var newMessage Message
@@ -358,7 +360,7 @@ func (r *Repository) CreateMessage(ctx context.Context, conversationID string, s
 	)
 
 	if err != nil {
-		return Message{}, err
+		return Message{}, "", err
 	}
 
 	commandTag, err := tx.Exec(ctx, `
@@ -368,16 +370,16 @@ func (r *Repository) CreateMessage(ctx context.Context, conversationID string, s
 	`, conversationID)
 
 	if err != nil {
-		return Message{}, err
+		return Message{}, "", err
 	}
 
 	if commandTag.RowsAffected() == 0 {
-		return Message{}, pgx.ErrNoRows
+		return Message{}, "", pgx.ErrNoRows
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return Message{}, err
+		return Message{}, "", err
 	}
 
-	return newMessage, nil
+	return newMessage, recipientID, nil
 }

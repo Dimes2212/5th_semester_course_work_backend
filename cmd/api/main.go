@@ -11,10 +11,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Dimes2212/5th_semester_course_work_backend/internal/admin"
 	"github.com/Dimes2212/5th_semester_course_work_backend/internal/auth"
 	"github.com/Dimes2212/5th_semester_course_work_backend/internal/chat"
+	"github.com/Dimes2212/5th_semester_course_work_backend/internal/health"
 	"github.com/Dimes2212/5th_semester_course_work_backend/internal/listing"
 	"github.com/Dimes2212/5th_semester_course_work_backend/internal/lookup"
+	"github.com/Dimes2212/5th_semester_course_work_backend/internal/ratelimit"
+	"github.com/Dimes2212/5th_semester_course_work_backend/internal/realtime"
 	"github.com/Dimes2212/5th_semester_course_work_backend/internal/s3"
 	"github.com/Dimes2212/5th_semester_course_work_backend/internal/user"
 	"github.com/go-chi/chi/v5"
@@ -30,9 +34,17 @@ func main() {
 	)
 	defer stop()
 
+	appEnvironment := os.Getenv("APP_ENV")
+	if appEnvironment == "" {
+		appEnvironment = "local"
+	}
+
 	//бд
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
+		if appEnvironment == "production" {
+			log.Fatal("DATABASE_URL is required in production")
+		}
 		databaseURL = "postgres://campuslost:campuslost@localhost:5436/campuslost?sslmode=disable"
 	}
 
@@ -81,6 +93,9 @@ func main() {
 	// настройка секреток
 	jwtSecret := os.Getenv("JWT_SECRET")
 	if jwtSecret == "" {
+		if appEnvironment == "production" {
+			log.Fatal("JWT_SECRET is required in production")
+		}
 		jwtSecret = "local-development-secret-change-me-1234567890"
 	}
 
@@ -88,6 +103,9 @@ func main() {
 	if jwtIssuer == "" {
 		jwtIssuer = "campuslost"
 	}
+
+	accessTokenTTL := durationFromEnvironment("ACCESS_TOKEN_TTL", 15*time.Minute)
+	refreshTokenTTL := durationFromEnvironment("REFRESH_TOKEN_TTL", 30*24*time.Hour)
 
 	// репа авторизации
 	authRepository := auth.NewRepository(db)
@@ -97,8 +115,8 @@ func main() {
 		authRepository,
 		jwtSecret,
 		jwtIssuer,
-		15*time.Minute,
-		30*24*time.Hour,
+		accessTokenTTL,
+		refreshTokenTTL,
 	)
 
 	// ручка и мв авторизации
@@ -120,9 +138,21 @@ func main() {
 	listingService := listing.NewService(listingRepository, objectStorage)
 	listingHandler := listing.NewHandler(listingService)
 
+	//админка
+	adminRepository := admin.NewRepository(db)
+	adminService := admin.NewService(adminRepository, listingRepository, objectStorage)
+	adminHandler := admin.NewHandler(adminService)
+
+	// проверка состояния API
+	healthHandler := health.NewHandler(db)
+
+	//websocket
+	realtimeHub := realtime.NewHub()
+	realtimeHandler := realtime.NewHandler(realtimeHub)
+
 	//чаты
 	chatRepository := chat.NewRepository(db)
-	chatService := chat.NewService(chatRepository)
+	chatService := chat.NewService(chatRepository, realtimeHub)
 	chatHandler := chat.NewHandler(chatService)
 
 	//роутер
@@ -130,15 +160,20 @@ func main() {
 
 	// встроенные миддлвары
 	router.Use(middleware.RequestID)
-	router.Use(middleware.RealIP)
+	router.Use(middleware.ClientIPFromRemoteAddr)
 	router.Use(middleware.Logger)
 	router.Use(middleware.Recoverer)
 
 	//маршруты
+	router.Get("/health", healthHandler.Check)
+
 	router.Route("/api/v1/auth", func(router chi.Router) {
-		router.Post("/register", authHandler.Register)
-		router.Post("/login", authHandler.Login)
-		router.Post("/refresh", authHandler.Refresh)
+		router.With(ratelimit.ByClientIP(5, 10*time.Minute)).
+			Post("/register", authHandler.Register)
+		router.With(ratelimit.ByClientIP(10, time.Minute)).
+			Post("/login", authHandler.Login)
+		router.With(ratelimit.ByClientIP(30, time.Minute)).
+			Post("/refresh", authHandler.Refresh)
 
 		router.With(authMiddleware.Authenticate).
 			Post("/logout", authHandler.Logout)
@@ -167,7 +202,32 @@ func main() {
 		router.Post("/api/v1/listings/{listingID}/conversations", chatHandler.CreateOrGetConversation)
 		router.Get("/api/v1/me/conversations", chatHandler.GetMyConversations)
 		router.Get("/api/v1/conversations/{conversationID}/messages", chatHandler.GetConversationMessages)
-		router.Post("/api/v1/conversations/{conversationID}/messages", chatHandler.CreateMessage)
+		router.With(ratelimit.ByClientIP(60, time.Minute)).Post(
+			"/api/v1/conversations/{conversationID}/messages",
+			chatHandler.CreateMessage,
+		)
+		router.Get("/api/v1/ws", realtimeHandler.Connect)
+	})
+
+	router.Route("/api/v1/admin", func(router chi.Router) {
+		router.Use(authMiddleware.Authenticate)
+		router.Use(authMiddleware.RequireAdmin)
+
+		router.Get("/users", adminHandler.GetAllUsers)
+		router.Patch(
+			"/users/{userID}/status",
+			adminHandler.SetUserBlocked,
+		)
+
+		router.Get("/listings", adminHandler.GetAllListings)
+		router.Delete(
+			"/listings/{listingID}",
+			adminHandler.SoftDeleteListingByID,
+		)
+		router.Patch(
+			"/listings/{listingID}/restore",
+			adminHandler.RestoreListingByID,
+		)
 	})
 
 	// запуск сервера
@@ -186,12 +246,24 @@ func main() {
 	}
 
 	serverErrors := make(chan error, 1)
+	tlsCertFile := os.Getenv("TLS_CERT_FILE")
+	tlsKeyFile := os.Getenv("TLS_KEY_FILE")
+
+	if (tlsCertFile == "") != (tlsKeyFile == "") {
+		log.Fatal("TLS_CERT_FILE and TLS_KEY_FILE must be set together")
+	}
 
 	// graceful shutdown
 	go func() {
-		log.Printf("HTTP server is listening on %s", httpAddress)
+		var err error
 
-		err := server.ListenAndServe()
+		if tlsCertFile != "" {
+			log.Printf("HTTPS server is listening on %s", httpAddress)
+			err = server.ListenAndServeTLS(tlsCertFile, tlsKeyFile)
+		} else {
+			log.Printf("HTTP server is listening on %s", httpAddress)
+			err = server.ListenAndServe()
+		}
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErrors <- err
 		}
@@ -200,10 +272,11 @@ func main() {
 	select {
 	case err := <-serverErrors:
 		log.Printf("run HTTP server: %v", err)
-		return
 	case <-ctx.Done():
 		log.Println("shutdown signal received")
 	}
+
+	realtimeHub.Close()
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -215,4 +288,18 @@ func main() {
 		)
 	}
 
+}
+
+func durationFromEnvironment(name string, fallback time.Duration) time.Duration {
+	value := os.Getenv(name)
+	if value == "" {
+		return fallback
+	}
+
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		log.Fatalf("parse %s: %v", name, err)
+	}
+
+	return duration
 }

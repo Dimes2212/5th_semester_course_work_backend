@@ -29,7 +29,8 @@ func (r *Repository) FindUserByEmail(ctx context.Context, email string) (user.Us
 			avatar_key,
 			created_at,
 			updated_at,
-			deleted_at
+			deleted_at,
+			blocked_at
 		FROM users
 		WHERE email = $1
 		  AND deleted_at IS NULL
@@ -43,9 +44,26 @@ func (r *Repository) FindUserByEmail(ctx context.Context, email string) (user.Us
 		&foundUser.CreatedAt,
 		&foundUser.UpdatedAt,
 		&foundUser.DeletedAt,
+		&foundUser.BlockedAt,
 	)
 
 	return foundUser, err
+}
+
+func (r *Repository) IsUserActive(ctx context.Context, userID string) (bool, error) {
+	var active bool
+
+	err := r.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM users
+			WHERE id = $1
+			  AND deleted_at IS NULL
+			  AND blocked_at IS NULL
+		)
+	`, userID).Scan(&active)
+
+	return active, err
 }
 
 func (r *Repository) CreateUser(ctx context.Context, fullName string, email string, PasswordHash string) (user.User, error) {
@@ -63,7 +81,8 @@ func (r *Repository) CreateUser(ctx context.Context, fullName string, email stri
 			avatar_key,
 			created_at,
 			updated_at,
-			deleted_at;
+			deleted_at,
+			blocked_at;
 	`, fullName, email, PasswordHash).Scan(
 		&newUser.ID,
 		&newUser.FullName,
@@ -74,6 +93,7 @@ func (r *Repository) CreateUser(ctx context.Context, fullName string, email stri
 		&newUser.CreatedAt,
 		&newUser.UpdatedAt,
 		&newUser.DeletedAt,
+		&newUser.BlockedAt,
 	)
 
 	return newUser, err
@@ -106,6 +126,7 @@ func (r *Repository) RotateRefreshSession(
 			  AND session.expires_at > now()
 			  AND users.id = session.user_id
 			  AND users.deleted_at IS NULL
+			  AND users.blocked_at IS NULL
 			RETURNING session.user_id, session.device_name
 		),
 		created_session AS (
@@ -123,7 +144,8 @@ func (r *Repository) RotateRefreshSession(
 			avatar_key,
 			created_at,
 			updated_at,
-			deleted_at
+			deleted_at,
+			blocked_at
 		FROM users
 		WHERE id = (
 			SELECT user_id
@@ -139,6 +161,7 @@ func (r *Repository) RotateRefreshSession(
 		&foundUser.CreatedAt,
 		&foundUser.UpdatedAt,
 		&foundUser.DeletedAt,
+		&foundUser.BlockedAt,
 	)
 
 	return foundUser, err

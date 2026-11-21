@@ -5,16 +5,23 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/Dimes2212/5th_semester_course_work_backend/internal/realtime"
 	"github.com/jackc/pgx/v5"
 )
 
-type Service struct {
-	repository *Repository
+type EventPublisher interface {
+	Publish(userID string, event realtime.Event)
 }
 
-func NewService(repository *Repository) *Service {
+type Service struct {
+	repository *Repository
+	publisher  EventPublisher
+}
+
+func NewService(repository *Repository, publisher EventPublisher) *Service {
 	return &Service{
 		repository: repository,
+		publisher:  publisher,
 	}
 }
 
@@ -86,13 +93,26 @@ func (s *Service) CreateMessage(ctx context.Context, conversationID string, send
 		return Message{}, err
 	}
 
-	message, err := s.repository.CreateMessage(ctx, conversationID, senderID, text)
+	message, recipientID, err := s.repository.CreateMessage(ctx, conversationID, senderID, text)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Message{}, ErrConversationNotFound
 	}
 	if err != nil {
 		return Message{}, fmt.Errorf("create message: %w", err)
 	}
+
+	event := realtime.Event{
+		Type: "message_created",
+		Data: MessageCreatedEvent{
+			ID:             message.ID,
+			ConversationID: message.ConversationID,
+			SenderID:       message.SenderID,
+			Text:           message.Text,
+			CreatedAt:      message.CreatedAt,
+		},
+	}
+
+	s.publisher.Publish(recipientID, event)
 
 	return message, nil
 }

@@ -45,3 +45,11 @@ type conversationResponse struct {
 type createMessageRequest struct {
 	Text string `json:"text"`
 }
+
+type MessageCreatedEvent struct {
+	ID             string    `json:"id"`
+	ConversationID string    `json:"conversation_id"`
+	SenderID       string    `json:"sender_id"`
+	Text           string    `json:"text"`
+	CreatedAt      time.Time `json:"created_at"`
+}

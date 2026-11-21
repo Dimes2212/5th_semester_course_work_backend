@@ -30,7 +30,8 @@ func (r *Repository) FindByID(ctx context.Context, userID string) (User, error) 
 			avatar_key,
 			created_at,
 			updated_at,
-			deleted_at
+			deleted_at,
+			blocked_at
 		FROM users
 		WHERE id = $1
 		  AND deleted_at IS NULL
@@ -44,6 +45,7 @@ func (r *Repository) FindByID(ctx context.Context, userID string) (User, error) 
 		&foundUser.CreatedAt,
 		&foundUser.UpdatedAt,
 		&foundUser.DeletedAt,
+		&foundUser.BlockedAt,
 	)
 
 	return foundUser, err
@@ -66,7 +68,8 @@ func (r *Repository) UpdateFullName(ctx context.Context, userID string, fullName
 			avatar_key,
 			created_at,
 			updated_at,
-			deleted_at;
+			deleted_at,
+			blocked_at;
 	`, fullName, userID).Scan(
 		&updatedUser.ID,
 		&updatedUser.FullName,
@@ -77,6 +80,7 @@ func (r *Repository) UpdateFullName(ctx context.Context, userID string, fullName
 		&updatedUser.CreatedAt,
 		&updatedUser.UpdatedAt,
 		&updatedUser.DeletedAt,
+		&updatedUser.BlockedAt,
 	)
 
 	return updatedUser, err

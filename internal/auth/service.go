@@ -79,6 +79,9 @@ func (s *Service) Login(ctx context.Context, input LoginInput) (AuthResult, erro
 	if err != nil {
 		return AuthResult{}, fmt.Errorf("find user by email: %w", err)
 	}
+	if foundUser.BlockedAt != nil {
+		return AuthResult{}, ErrInvalidCredentials
+	}
 
 	if err := bcrypt.CompareHashAndPassword(
 		[]byte(foundUser.PasswordHash),
@@ -137,6 +140,18 @@ func (s *Service) Logout(ctx context.Context, refreshToken string) error {
 		hashRefreshToken(refreshToken),
 	); err != nil {
 		return fmt.Errorf("revoke refresh session: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Service) ValidateAccessUser(ctx context.Context, userID string) error {
+	active, err := s.repository.IsUserActive(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("check access user: %w", err)
+	}
+	if !active {
+		return ErrInvalidAccessToken
 	}
 
 	return nil

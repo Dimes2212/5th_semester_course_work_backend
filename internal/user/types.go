@@ -19,6 +19,7 @@ type User struct {
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 	DeletedAt    *time.Time
+	BlockedAt    *time.Time
 }
 
 type Profile struct {
