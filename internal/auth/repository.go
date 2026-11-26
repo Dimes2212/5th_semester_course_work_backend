@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/Dimes2212/5th_semester_course_work_backend/internal/user"
@@ -176,4 +177,20 @@ func (r *Repository) RevokeRefreshSession(ctx context.Context, tokenHash string)
 	`, tokenHash)
 
 	return err
+}
+
+func (r *Repository) DeleteExpiredSessions(ctx context.Context) (int64, error) {
+	commandTag, err := r.db.Exec(ctx, `
+		DELETE FROM refresh_sessions
+		WHERE expires_at < now() - interval '7 days'
+		   OR revoked_at < now() - interval '7 days'
+	`)
+
+	if err != nil {
+		return 0, fmt.Errorf(
+			"delete expired refresh sessions: %w",
+			err,
+		)
+	}
+	return commandTag.RowsAffected(), nil
 }

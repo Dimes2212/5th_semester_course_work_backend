@@ -110,6 +110,13 @@ func main() {
 	// репа авторизации
 	authRepository := auth.NewRepository(db)
 
+	//cleanup рефрешей
+	go auth.RunRefreshSessionCleanup(
+		ctx,
+		authRepository,
+		log.Default(),
+	)
+
 	//сервис авторизации
 	authService := auth.NewService(
 		authRepository,
